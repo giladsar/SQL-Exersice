@@ -1,0 +1,160 @@
+---
+title: "SQL exercise"
+format: docx
+toc: true
+execute:
+ echo: true
+editor_options: 
+  chunk_output_type: inline
+knitr: true #for some reason I got to have this in the YAML, otherwise the parameter reference doesn't render what it's stored in the params
+params: 
+  student: "Gilad"
+---
+
+This is  `r params$student`'s Exercise
+
+
+## Setting Up
+
+In order to get c to *quarto*'s framework I will explain thoroughly the steps which enabled me to complete this assignment.
+
+First and foremost, I'll try to understand in which manner the db is integrated into quarto.
+
+
+In order to do so, I'll insert the authentication for the online DB. as I understood, the call that returns the data-frame should be in a R code Block, so lets try it out : 
+
+*it didn't work in the first try because I had to install the 'RSQLite' package.* 
+
+```{r initial}
+ library(knitr)
+ con_chocolate <- DBI::dbConnect(drv = RSQLite::SQLite(), dbname = "chocolate.sqlite")
+```
+
+
+Now the DB is in my local environment so I can get started. 
+
+## Q1
+
+The question is addressing the following query: 
+```{sql given_query, connection= con_chocolate, output.var= "salesrep_returned"}
+SELECT salesreps.Name, SUM(orders.amount) AS total_candy_bars_sold FROM salesreps INNER JOIN orders USING (srid)
+WHERE
+orders.sale_date BETWEEN '2022-01-01' AND '2022-12-31' AND salesreps.year_joined = 2010
+GROUP BY salesreps.Name;
+```
+
+
+
+
+
+
+### 1 
+
+this query fetchs from the table 'salesreps' after it got merged with the table 'orders' by their sales rep identification (srid).
+
+This merged table includes sales representatives that joined the company in 2010, and that the has sales whose been done in the year 2022 (focusing on this year alone).
+
+the query calls to group the instances in this table by the sales rep's name, and to *return* data which has two features (columns): the name of the sales rep (Column: 'Name') and the total number of  the candies he sold in 2022 (column: 'total_candy_bars_sold') 
+
+
+**Answer:**
+
+In other words, the Boss wanted to know the total number of candy bars sold in 2022 by each sales representative who joined the company in 2010.
+
+
+
+
+
+
+
+### 2 
+
+the query returns 3 oriental sales representatives: `r gsub(",", "", salesrep_returned$Name)` who had sold in 2022 `r salesrep_returned$total_candy_bars_sold` candy bars respectively.
+
+
+
+## Q2 
+
+The objective is to create a new table that consist of the total number 
+of order made by a customer and the number of customer whose total orders are equal to the value nested in the first column. 
+
+**Strategy (the final step is the answer):** 
+
+1. I will try first to create a table of the number of orders that each customer made, by grouping the orders by customer's ID.
+```{sql q2_query1, connection= con_chocolate, output.var= "q2"}
+SELECT cid, COUNT(cid) as n_of_orders
+FROM orders
+GROUP BY cid;
+```
+
+2. from this table I will use the same approach but now I will group by the n_of_orders and receive the required frequency table.
+
+```{sql q2_query2, connection= con_chocolate, output.var= "q2"}
+SELECT COUNT(con.cid) AS N,  con.n_of_orders AS total_orders
+FROM (
+  SELECT cid, COUNT(cid) as n_of_orders
+  FROM orders 
+  GROUP BY cid
+) AS con 
+GROUP BY con.n_of_orders;
+
+```
+
+
+```{r r_table}
+#| echo: false
+#| warning: false
+#| fig-width: 3
+#| fig-height: 3
+kable(q2)
+
+```
+
+## Q3 
+
+* To achieve the required query I will need to intgrate data from tables *products* (candy_names) and *orders* (sale_date). Using a BETWEEN __ AND ___ operators and COUNT() function to get the number of orders assign to each candy bar name (using GROUP BY).
+  + while working I discover that there's a function called QUARTER each     returns a value 1 -4  in accordance to the quarter.
+  + but then I realized that sqlite doesn't support such function.
+* using the COUNT() function and CASE operation I will try to fetch the instances where the most selling candy bar name was sold by each sales rep in the second quarter.
+
+  + while working I found it more easier to work with nested queries, although I have a hinge that maybe there is a shorter solution...
+  
+well, I think so... let's try! 
+
+```{sql q3_query2, connection= con_chocolate, output.var= "q3"}
+
+WITH op1q as(
+  SELECT  pid, candy_names, COUNT(candy_names) as n_of_orders
+  FROM orders 
+  INNER JOIN products as p 
+  USING (pid)
+  WHERE orders.sale_date BETWEEN '2022-01-01'AND '2022-02-30'
+  GROUP BY pid
+  ORDER BY n_of_orders
+), 
+top_candy AS(
+  SELECT MAX(n_of_orders), candy_names, pid
+  FROM op1q
+),
+top_sr AS (
+  SELECT sr.Name as sr_name , COUNT(o.srid) as sales, tc.candy_names as top_candy
+  FROM orders AS o 
+  INNER JOIN salesreps AS sr
+  USING (srid)
+  INNER JOIN top_candy AS tc
+  USING (pid)
+  WHERE o.sale_date BETWEEN '2022-03-01'AND '2022-05-31'
+  AND o.pid = tc.pid 
+  GROUP BY srid
+  ORDER BY sales
+)
+
+SELECT top_candy, sr_name, MAX(sales)
+FROM top_sr
+
+```
+
+
+
+FINAL ANSWER: the candy bar with the highest number of total orders in the first quarter of 2022 was **`r q3$top_candy`** and the sales rep that sold the most of those candy bars in the second quarter of 2022 was **`r  gsub(",", "",q3$sr_name)`**
+
